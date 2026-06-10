@@ -1,0 +1,117 @@
+name: haul247
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Quick start
+#   docker compose up --build
+#
+# The three containers start in dependency order:
+#   db → backend (waits for MySQL to be healthy) → frontend
+#
+# Ports exposed on the host:
+#   http://localhost:3000  — Next.js frontend
+#   http://localhost:8000  — Laravel API  (e.g. /api/auth/login)
+#   localhost:3306         — MySQL (for DB GUIs like TablePlus / DBeaver)
+#
+# Optional — AI analysis and payment features require real API keys.
+# Create a .env file at this directory level and add:
+#   OPENAI_API_KEY=sk-proj-...
+#   PAYSTACK_SECRET_KEY=sk_live_...
+#   PAYSTACK_PUBLIC_KEY=pk_live_...
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── MySQL ──────────────────────────────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootsecret
+      MYSQL_DATABASE: haul247
+      MYSQL_USER: haul247
+      MYSQL_PASSWORD: haul247secret
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      # Waits until MySQL can actually accept queries, not just TCP connections
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-prootsecret"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ── Laravel API ────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./Backend
+    environment:
+      APP_NAME: Haul247
+      # Keep APP_ENV=local so the JWT cookie is not marked Secure=true
+      # (Docker runs over plain HTTP; Secure cookies require HTTPS)
+      APP_ENV: local
+      APP_KEY: "base64:Z1Ft24+6sq3WX/NXfJzU53wWFJrKVZvhXpmoCJYgO3M="
+      APP_DEBUG: "false"
+      APP_URL: http://localhost:8000
+
+      # ── MySQL — points to the 'db' service by name ──
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_DATABASE: haul247
+      DB_USERNAME: haul247
+      DB_PASSWORD: haul247secret
+
+      SESSION_DRIVER: database
+      CACHE_STORE: database
+      QUEUE_CONNECTION: sync
+
+      LOG_CHANNEL: stderr
+      LOG_LEVEL: error
+
+      # ── JWT ──
+      JWT_SECRET: pQTcs1tOC4FdsbuWEsxA9L49ClvuHOoMjvsxdNUD1Cxne7qxRnb5Q9vWYb0KIdMh
+
+      # ── Paystack (test keys — safe for demo) ──
+      PAYSTACK_PUBLIC_KEY: "${PAYSTACK_PUBLIC_KEY:-pk_test_89ca3d9a0f11c1d751aa1503464bb823c3e7f90a}"
+      PAYSTACK_SECRET_KEY: "${PAYSTACK_SECRET_KEY:-sk_test_956627d1cacd2df916cb75f084edaeef820ffd66}"
+
+      # ── OpenAI — set in your local .env or shell before running ──
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+
+    ports:
+      - "8000:80"
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    # Runs once DB is healthy:
+    #   1. Cache config & routes for performance
+    #   2. Run all migrations (idempotent — safe to run on every restart)
+    #   3. Start Apache
+    command: >
+      sh -c "
+        php artisan config:cache &&
+        php artisan route:cache &&
+        php artisan migrate --force &&
+        apache2-foreground
+      "
+
+  # ── Next.js Frontend ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./Frontend/frontend
+      args:
+        # Baked into the JS bundle at build time — must be the URL the
+        # BROWSER will use to reach the API (not an internal Docker hostname).
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+volumes:
+  mysql_data:
+    driver: local

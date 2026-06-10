@@ -1,0 +1,303 @@
+openapi: 3.0.3
+
+info:
+  title: Haul247 Freight Booking API
+  version: 1.0.0
+  description: >
+    RESTful API for freight booking, shipment tracking, Paystack payment
+    initiation, and AI-powered anomaly detection.
+
+servers:
+  - url: http://localhost:8000/api
+    description: Local development server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Shipment:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        tracking_number:
+          type: string
+          example: SHP-ABCDE12345
+        origin:
+          type: string
+          example: Lagos
+        destination:
+          type: string
+          example: Abuja
+        weight_kg:
+          type: integer
+          example: 500
+        status:
+          type: string
+          enum: [pending, paid, assigned, in-transit, delivered]
+          example: pending
+        user_id:
+          type: integer
+          example: 3
+        truck_id:
+          type: integer
+          nullable: true
+          example: null
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ValidationError:
+      type: object
+      properties:
+        message:
+          type: string
+          example: The origin field is required.
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+          example: Unauthenticated.
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate a user and obtain a JWT
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: operator@haul247.com
+                password:
+                  type: string
+                  format: password
+                  example: secret
+      responses:
+        '200':
+          description: Login successful — returns a signed JWT
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    example: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
+                  token_type:
+                    type: string
+                    example: bearer
+                  expires_in:
+                    type: integer
+                    example: 3600
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /shipments:
+    post:
+      tags: [Shipments]
+      summary: Create a new shipment booking
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [origin, destination, weight_kg]
+              properties:
+                origin:
+                  type: string
+                  example: Lagos
+                destination:
+                  type: string
+                  example: Port Harcourt
+                weight_kg:
+                  type: integer
+                  minimum: 1
+                  example: 1200
+                truck_id:
+                  type: integer
+                  nullable: true
+                  example: null
+      responses:
+        '201':
+          description: Shipment created — a unique tracking number is generated automatically
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shipment'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+
+  /shipments/{shipment}/analyze:
+    get:
+      tags: [Shipments]
+      summary: Run AI anomaly detection on a shipment
+      description: >
+        Loads the shipment and its complete audit log, then sends the data to
+        GPT-4o. Returns a structured risk assessment with a risk level
+        (Low / Medium / High) and a two-sentence explanation.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: shipment
+          in: path
+          required: true
+          description: ID of the shipment to analyse
+          schema:
+            type: integer
+          example: 7
+      responses:
+        '200':
+          description: AI analysis result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shipment_id:
+                    type: integer
+                    example: 7
+                  tracking_number:
+                    type: string
+                    example: SHP-ABCDE12345
+                  risk_level:
+                    type: string
+                    enum: [Low, Medium, High]
+                    example: Low
+                  assessment:
+                    type: string
+                    example: >
+                      The shipment is progressing normally with no status
+                      anomalies detected. It is expected to arrive at its
+                      destination on schedule.
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Shipment not found
+        '502':
+          description: AI service returned an unexpected response format
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  raw:
+                    type: string
+        '503':
+          description: Could not connect to the AI analysis service
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  error:
+                    type: string
+
+  /paystack/webhook:
+    post:
+      tags: [Payments]
+      summary: Paystack charge event webhook receiver
+      description: >
+        Receives real-time charge events from Paystack. Every request is
+        verified against an HMAC-SHA512 signature (keyed with
+        `PAYSTACK_SECRET_KEY`) before any processing occurs. On a
+        `charge.success` event the corresponding shipment is transitioned from
+        `pending` to `paid`. The endpoint always returns HTTP 200 for
+        acknowledged events to prevent Paystack from retrying.
+      security: []
+      parameters:
+        - name: x-paystack-signature
+          in: header
+          required: true
+          description: HMAC-SHA512 of the raw request body using the Paystack secret key
+          schema:
+            type: string
+          example: 7b52a9b4c5d6e7f8a1b2c3d4e5f6a7b8c9d0e1f2...
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event:
+                  type: string
+                  example: charge.success
+                data:
+                  type: object
+                  properties:
+                    reference:
+                      type: string
+                      example: PAY-SHP-ABCDE12345-XY1234
+                    metadata:
+                      type: object
+                      properties:
+                        shipment_id:
+                          type: integer
+                          example: 7
+      responses:
+        '200':
+          description: Event acknowledged (includes ignored/unknown event types)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        '401':
+          description: Missing or invalid HMAC-SHA512 signature
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'

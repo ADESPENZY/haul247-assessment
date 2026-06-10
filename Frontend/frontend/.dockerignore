@@ -1,0 +1,22 @@
+node_modules/
+.next/
+
+# Local env files — config comes from docker-compose.yml
+.env.local
+.env*.local
+.env
+
+# Logs and caches
+*.log
+.npm/
+
+# Git and IDE
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# Docs
+README.md
+CLAUDE.md
+AGENTS.md
