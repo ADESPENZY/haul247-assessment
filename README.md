@@ -42,6 +42,8 @@ The backend automatically runs migrations on first start. Open [http://localhost
 | Feature | Description |
 |---|---|
 | **JWT HttpOnly Auth** | Stateless auth with dual-cookie XSS protection |
+| **Role-Based Access Control** | Admin and Operator roles — destructive operations restricted to Admin via `RequireRole` middleware |
+| **Rate Limiting** | Auth endpoints throttled to 5 req/min; payment endpoint to 10 req/min — blocks brute-force and abuse |
 | **Truck Fleet Management** | Register trucks with capacity, location, and live status tracking |
 | **Freight Booking** | Book shipments with targeted truck dispatch or open-market broadcast |
 | **Driver Job Board** | Drivers see pending shipment offers and accept in one click |
@@ -49,6 +51,9 @@ The backend automatically runs migrations on first start. Open [http://localhost
 | **AI Anomaly Detection** | GPT-4o analyses a shipment's full audit trail for risk flags |
 | **Paystack Payments** | HMAC-verified webhook flow; shipment advances to `paid` on confirmation |
 | **Lifecycle State Machine** | Shipment only moves `pending → assigned` when a driver explicitly accepts |
+| **Audit Logging** | Every state-changing operation writes a tamper-evident audit log entry |
+| **Shipment Tracking History** | `GET /shipments/{id}/tracking` returns a full chronological timeline from the audit log |
+| **Idempotent Payments** | `Idempotency-Key` header on payment initiation prevents duplicate charges on network retries |
 
 ---
 
@@ -245,7 +250,54 @@ All hook-dependent code is encapsulated in `DashboardShell`, where React guarant
 
 ---
 
-### 4. Payment Integration: Paystack Checkout Flow
+### 4. Idempotency: Preventing Duplicate Payments
+
+A mobile app on a flaky network might fire `POST /api/paystack/initiate` twice before receiving a response. Without idempotency, the user ends up with two payment references for the same shipment — a support nightmare.
+
+The solution follows the same pattern used by Stripe and Paystack themselves: a client-supplied `Idempotency-Key` header. The server caches the response against `paystack:initiate:{userId}:{key}` for 24 hours. Any duplicate request with the same key gets the original response back, with an `X-Idempotent-Replayed: true` header so the client knows it was a replay:
+
+```
+First request:   POST /api/paystack/initiate  Idempotency-Key: uuid-abc-123
+                 → generates new reference, caches response, returns 200
+
+Duplicate retry: POST /api/paystack/initiate  Idempotency-Key: uuid-abc-123
+                 → returns cached response, X-Idempotent-Replayed: true
+                 → no new reference generated
+```
+
+When no explicit key is supplied (e.g. a browser click), a per-shipment natural key (`shipment-{id}`) is applied with a 1-hour window — preventing accidental double-payment from a double-click.
+
+---
+
+### 5. Security Controls: RBAC and Rate Limiting
+
+#### Role-Based Access Control
+
+Two roles are defined as a PHP backed enum (`UserRole::Admin`, `UserRole::Operator`). The `RequireRole` middleware resolves the authenticated user's role and compares it against the required role(s) for the route:
+
+```php
+// Only admins can delete trucks or shipments
+Route::delete('trucks/{truck}',    [TruckController::class,    'destroy'])->middleware('role:admin');
+Route::delete('shipments/{id}',    [ShipmentController::class, 'destroy'])->middleware('role:admin');
+```
+
+Any operator attempting a delete receives a `403 Forbidden` with a clear message. All other operations (create, read, update, accept) are available to both roles — matching real-world logistics where operators do day-to-day work and admins handle data governance.
+
+#### Rate Limiting
+
+Laravel's built-in `throttle` middleware is applied at the route group level:
+
+```
+POST /api/auth/register   →  5 requests / minute / IP
+POST /api/auth/login      →  5 requests / minute / IP
+POST /api/paystack/initiate → 10 requests / minute / IP
+```
+
+A brute-force login attempt hitting the 5-request ceiling gets a `429 Too Many Requests` response. The limits are deliberately conservative — in production these would be backed by Redis and combined with account-level lockout after N consecutive failures.
+
+---
+
+### 5. Payment Integration: Paystack Checkout Flow
 
 #### End-to-End Flow
 
@@ -518,9 +570,10 @@ All endpoints are prefixed with `/api`. Authenticated routes require the `jwt_to
 | `POST` | `/api/shipments` | Book a new freight shipment |
 | `PUT` | `/api/shipments/{id}` | Update shipment details or status |
 | `DELETE` | `/api/shipments/{id}` | Cancel a shipment |
-| `POST` | `/api/trucks/{id}/accept/{shipmentId}` | Driver accepts a pending shipment offer — advances both to `assigned` |
-| `POST` | `/api/paystack/initiate` | Initiate a Paystack payment for a shipment |
-| `GET` | `/api/shipments/{id}/analyze` | Run GPT-4o AI anomaly detection on a shipment's full audit trail |
+| `POST` | `/api/trucks/{id}/accept/{shipmentId}` | Driver accepts a pending/paid shipment — advances both to `assigned` |
+| `GET` | `/api/shipments/{id}/tracking` | Full chronological tracking timeline derived from the audit log |
+| `POST` | `/api/paystack/initiate` | Initiate payment — idempotent via `Idempotency-Key` header (24h window) |
+| `GET` | `/api/shipments/{id}/analyze` | GPT-4o anomaly detection on a shipment's full audit trail |
 | `POST` | `/api/shipments/recommend-truck` | GPT-4o selects the best available truck for origin/destination/weight |
 
 ---
