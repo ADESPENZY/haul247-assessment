@@ -169,6 +169,224 @@ paths:
               schema:
                 $ref: '#/components/schemas/ValidationError'
 
+  /shipments/{shipment}/tracking:
+    get:
+      tags: [Shipments]
+      summary: Get full tracking history for a shipment
+      description: >
+        Returns the shipment details and a chronological timeline of every
+        state change and update, derived from the audit log.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: shipment
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 7
+      responses:
+        '200':
+          description: Shipment tracking timeline
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shipment:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                      tracking_number:
+                        type: string
+                      origin:
+                        type: string
+                      destination:
+                        type: string
+                      status:
+                        type: string
+                      truck:
+                        type: object
+                        nullable: true
+                        properties:
+                          license_plate:
+                            type: string
+                          current_location:
+                            type: string
+                  timeline:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        timestamp:
+                          type: string
+                          format: date-time
+                        event:
+                          type: string
+                          example: updated
+                        description:
+                          type: string
+                          example: "status: pending → assigned"
+                        changed_by:
+                          type: string
+                          example: John Doe
+                        changes:
+                          type: object
+                          properties:
+                            from:
+                              type: object
+                            to:
+                              type: object
+        '401':
+          description: Unauthenticated
+
+  /trucks/{truck}/accept/{shipment}:
+    post:
+      tags: [Trucks]
+      summary: Driver accepts a shipment offer
+      description: >
+        Atomically transitions the shipment from pending/paid to assigned
+        and the truck from available to assigned. Returns 422 if the truck
+        is not available or the shipment is no longer pending/paid.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: truck
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: shipment
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Shipment assigned to truck
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shipment'
+        '422':
+          description: Truck not available or shipment no longer pending
+
+  /shipments/recommend-truck:
+    post:
+      tags: [Shipments]
+      summary: AI-powered truck recommendation
+      description: >
+        Sends available trucks and shipment details to GPT-4o, which selects
+        the best match based on capacity and proximity. Returns the recommended
+        truck ID with a reasoning justification.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [origin, destination, weight_kg]
+              properties:
+                origin:
+                  type: string
+                  example: Lagos
+                destination:
+                  type: string
+                  example: Kano
+                weight_kg:
+                  type: integer
+                  example: 800
+      responses:
+        '200':
+          description: Recommended truck
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  truck_id:
+                    type: integer
+                  justification:
+                    type: string
+                  truck:
+                    type: object
+                    properties:
+                      license_plate:
+                        type: string
+                      capacity_kg:
+                        type: integer
+                      current_location:
+                        type: string
+        '422':
+          description: No available trucks
+
+  /paystack/initiate:
+    post:
+      tags: [Payments]
+      summary: Initiate a Paystack payment for a shipment
+      description: >
+        Generates a Paystack authorization URL for the given shipment.
+        Supports idempotency via the `Idempotency-Key` header — sending the
+        same key within 24 hours returns the original response without creating
+        a new payment reference. Without an explicit key, a per-shipment natural
+        key is applied (1-hour window).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Client-generated unique key to prevent duplicate payment initiations
+          schema:
+            type: string
+          example: "booking-flow-uuid-1234"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shipment_id]
+              properties:
+                shipment_id:
+                  type: integer
+                  example: 7
+      responses:
+        '200':
+          description: Authorization URL created
+          headers:
+            X-Idempotent-Replayed:
+              description: Present and set to "true" when a cached idempotent response is returned
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      authorization_url:
+                        type: string
+                      access_code:
+                        type: string
+                      reference:
+                        type: string
+                      shipment_id:
+                        type: integer
+        '422':
+          description: Shipment is not in pending status
+        '429':
+          description: Rate limit exceeded (10 requests/minute)
+
   /shipments/{shipment}/analyze:
     get:
       tags: [Shipments]

@@ -6,6 +6,7 @@ use App\Enums\ShipmentStatus;
 use App\Models\Shipment;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
 class PaystackController extends Controller
@@ -23,14 +24,32 @@ class PaystackController extends Controller
         }
 
         if ($shipment->status !== ShipmentStatus::Pending) {
-            return response()->json([
-                'message' => 'Only pending shipments can be paid for.',
-            ], 422);
+            return response()->json(['message' => 'Only pending shipments can be paid for.'], 422);
+        }
+
+        // ── Idempotency ───────────────────────────────────────────────────────
+        // If the client sends an Idempotency-Key header, return the cached
+        // response for any duplicate request within 24 hours — prevents double
+        // payment initiations caused by network retries.
+        // Falls back to a per-shipment natural key (1-hour window) when no
+        // explicit key is provided.
+        $userId         = auth('api')->id();
+        $idempotencyKey = $request->header('Idempotency-Key')
+            ?? 'shipment-' . $shipment->id;
+
+        $cacheKey = "paystack:initiate:{$userId}:{$idempotencyKey}";
+        $ttl      = $request->hasHeader('Idempotency-Key') ? 86400 : 3600;
+
+        $cached = Cache::get($cacheKey);
+
+        if ($cached) {
+            return response()->json($cached)
+                ->header('X-Idempotent-Replayed', 'true');
         }
 
         $reference = strtoupper('PAY-' . $shipment->tracking_number . '-' . Str::random(8));
 
-        return response()->json([
+        $payload = [
             'status'  => true,
             'message' => 'Authorization URL created',
             'data'    => [
@@ -39,7 +58,11 @@ class PaystackController extends Controller
                 'reference'         => $reference,
                 'shipment_id'       => $shipment->id,
             ],
-        ]);
+        ];
+
+        Cache::put($cacheKey, $payload, $ttl);
+
+        return response()->json($payload);
     }
 
     public function webhook(Request $request): JsonResponse
