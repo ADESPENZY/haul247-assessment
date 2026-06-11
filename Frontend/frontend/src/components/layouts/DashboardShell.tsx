@@ -4,8 +4,9 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import Cookies from 'js-cookie';
 import { toast } from 'sonner';
-import { LayoutDashboard, Package, Truck, LogOut } from 'lucide-react';
+import { LayoutDashboard, Package, Truck, LogOut, ShieldCheck, UserCircle } from 'lucide-react';
 import authService from '@/services/authService';
+import { useUserRole } from '@/hooks/useUserRole';
 
 const navLinks = [
   { href: '/dashboard',           label: 'Dashboard', icon: LayoutDashboard },
@@ -16,14 +17,16 @@ const navLinks = [
 export default function DashboardShell({ children }: { children: React.ReactNode }) {
   const router   = useRouter();
   const pathname = usePathname();
+  const role     = useUserRole();
 
   const handleLogout = async () => {
     try {
       await authService.logout();
     } catch {
-      // Non-fatal — clear the cookie regardless
+      // Non-fatal — clear cookies regardless
     }
     Cookies.remove('token');
+    localStorage.removeItem('userRole');
     toast.success('Logged out. See you soon!');
     router.push('/login');
   };
@@ -59,7 +62,20 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           })}
         </nav>
 
-        <div className="flex-shrink-0 border-t border-surface-200 p-3">
+        {/* Role badge + logout */}
+        <div className="flex-shrink-0 border-t border-surface-200 p-3 space-y-1">
+          {role && (
+            <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${
+              role === 'admin'
+                ? 'bg-amber-500/10 text-amber-400'
+                : 'bg-slate-500/10 text-slate-400'
+            }`}>
+              {role === 'admin'
+                ? <ShieldCheck className="h-3.5 w-3.5 flex-shrink-0" />
+                : <UserCircle  className="h-3.5 w-3.5 flex-shrink-0" />}
+              {role === 'admin' ? 'Platform Admin' : 'Operator'}
+            </div>
+          )}
           <button
             onClick={handleLogout}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-400 transition hover:bg-red-500/10 hover:text-red-400"
@@ -74,13 +90,21 @@ export default function DashboardShell({ children }: { children: React.ReactNode
       <div className="flex flex-1 flex-col overflow-hidden">
         <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-surface-200 bg-surface-100 px-6">
           <p className="text-sm font-medium text-slate-400">Freight Management Platform</p>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 rounded-lg border border-surface-200 px-3 py-1.5 text-sm font-medium text-slate-400 transition hover:border-red-500/40 hover:text-red-400"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            Logout
-          </button>
+          <div className="flex items-center gap-3">
+            {role === 'admin' && (
+              <span className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-400 ring-1 ring-amber-500/20">
+                <ShieldCheck className="h-3 w-3" />
+                Admin
+              </span>
+            )}
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 rounded-lg border border-surface-200 px-3 py-1.5 text-sm font-medium text-slate-400 transition hover:border-red-500/40 hover:text-red-400"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Logout
+            </button>
+          </div>
         </header>
 
         <main className="flex-1 overflow-auto bg-slate-950 p-6">

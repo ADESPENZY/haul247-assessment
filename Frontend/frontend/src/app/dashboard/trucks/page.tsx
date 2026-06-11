@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Plus, Loader2, MapPin, ChevronDown, ChevronUp, CircleCheck, Truck as TruckIcon } from 'lucide-react';
+import { Plus, Loader2, MapPin, ChevronDown, ChevronUp, CircleCheck, Truck as TruckIcon, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
 import Modal from '@/components/ui/Modal';
 import truckService, { Truck } from '@/services/truckService';
 import shipmentService, { Shipment } from '@/services/shipmentService';
+import { useUserRole } from '@/hooks/useUserRole';
 
 type TruckStatus = Truck['status'];
 
@@ -46,6 +47,9 @@ export default function TrucksPage() {
   const [capacity, setCapacity]           = useState('');
   const [location, setLocation]           = useState('Lagos');
   const [formStatus, setFormStatus]       = useState<TruckStatus>('available');
+  const [deletingId, setDeletingId]       = useState<number | null>(null);
+
+  const role = useUserRole();
 
   // ── Data loaders ──────────────────────────────────────────────────────────
 
@@ -152,6 +156,25 @@ export default function TrucksPage() {
     }
   };
 
+  // ── Delete truck (admin only) ─────────────────────────────────────────────
+
+  const handleDelete = async (truck: Truck) => {
+    if (! confirm(`Delete truck ${truck.license_plate}? This cannot be undone.`)) return;
+    setDeletingId(truck.id);
+    try {
+      await truckService.destroy(truck.id);
+      toast.success(`${truck.license_plate} removed from fleet.`);
+      setTrucks(prev => prev.filter(t => t.id !== truck.id));
+    } catch (err) {
+      const msg = axios.isAxiosError(err)
+        ? (err.response?.data?.message ?? 'Delete failed.')
+        : 'Delete failed.';
+      toast.error(msg);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   // ── Accept shipment offer ──────────────────────────────────────────────────
 
   const handleAcceptShipment = async (truck: Truck, shipment: Shipment) => {
@@ -195,7 +218,7 @@ export default function TrucksPage() {
         <table className="w-full text-left text-sm">
           <thead className="border-b border-surface-200 bg-surface-100">
             <tr>
-              {['License Plate', 'Capacity', 'Location', 'Status', 'Quick Update', 'Registered', 'Jobs'].map((h) => (
+              {['License Plate', 'Capacity', 'Location', 'Status', 'Quick Update', 'Registered', 'Jobs', ...(role === 'admin' ? [''] : [])].map((h) => (
                 <th key={h} className="px-5 py-3.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
                   {h}
                 </th>
@@ -314,6 +337,22 @@ export default function TrucksPage() {
                         <span className="text-xs text-slate-600">—</span>
                       )}
                     </td>
+
+                    {/* Delete — admin only */}
+                    {role === 'admin' && (
+                      <td className="px-3 py-4">
+                        <button
+                          onClick={() => handleDelete(truck)}
+                          disabled={deletingId === truck.id}
+                          className="flex items-center gap-1 rounded-lg border border-red-700/40 px-2.5 py-1.5 text-xs font-medium text-red-500 transition hover:bg-red-500/10 disabled:opacity-50"
+                        >
+                          {deletingId === truck.id
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <Trash2 className="h-3.5 w-3.5" />}
+                          Delete
+                        </button>
+                      </td>
+                    )}
                   </tr>
 
                   {/* Expandable job board row */}

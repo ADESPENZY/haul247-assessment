@@ -7,7 +7,6 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\Rules\Enum;
 
 class AuthController extends Controller
 {
@@ -17,14 +16,17 @@ class AuthController extends Controller
             'name'     => ['required', 'string', 'max:255'],
             'email'    => ['required', 'string', 'email', 'max:255', 'unique:users'],
             'password' => ['required', 'string', 'min:8', 'confirmed'],
-            'role'     => ['sometimes', 'string', new Enum(UserRole::class)],
         ]);
 
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $user = User::create($validator->validated());
+        // Public registration always creates an Operator.
+        // Admin accounts are provisioned via: php artisan admin:create
+        $data         = $validator->validated();
+        $data['role'] = UserRole::Operator;
+        $user         = User::create($data);
 
         $token = auth('api')->login($user);
 

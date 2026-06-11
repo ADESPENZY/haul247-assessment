@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Loader2, Brain, ChevronRight, Sparkles, CreditCard } from 'lucide-react';
+import { Plus, Loader2, Brain, ChevronRight, Sparkles, CreditCard, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
 import Modal from '@/components/ui/Modal';
+import { useUserRole } from '@/hooks/useUserRole';
 import shipmentService, {
   Shipment,
   ShipmentStatus,
@@ -89,6 +90,11 @@ export default function ShipmentsPage() {
 
   // Payment
   const [payingId, setPayingId]     = useState<number | null>(null);
+
+  // Delete
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const role = useUserRole();
 
   // AI analysis modal
   const [aiOpen, setAiOpen]         = useState(false);
@@ -192,6 +198,25 @@ export default function ShipmentsPage() {
       toast.error(msg);
     } finally {
       setSuggesting(false);
+    }
+  };
+
+  // ── Delete handler (admin only) ────────────────────────────────────────────
+
+  const handleDelete = async (shipment: Shipment) => {
+    if (! confirm(`Delete ${shipment.tracking_number}? This cannot be undone.`)) return;
+    setDeletingId(shipment.id);
+    try {
+      await shipmentService.destroy(shipment.id);
+      toast.success(`${shipment.tracking_number} deleted.`);
+      setShipments(prev => prev.filter(s => s.id !== shipment.id));
+    } catch (err) {
+      const msg = axios.isAxiosError(err)
+        ? (err.response?.data?.message ?? 'Delete failed.')
+        : 'Delete failed.';
+      toast.error(msg);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -352,6 +377,19 @@ export default function ShipmentsPage() {
                         <Brain className="h-3.5 w-3.5" />
                         AI Analysis
                       </button>
+                      {/* Delete — admin only */}
+                      {role === 'admin' && (
+                        <button
+                          onClick={() => handleDelete(s)}
+                          disabled={deletingId === s.id}
+                          className="flex items-center gap-1.5 rounded-lg border border-red-700/40 px-3 py-1.5 text-xs font-medium text-red-500 transition hover:bg-red-500/10 disabled:opacity-50"
+                        >
+                          {deletingId === s.id
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <Trash2 className="h-3.5 w-3.5" />}
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

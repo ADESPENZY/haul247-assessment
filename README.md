@@ -497,6 +497,16 @@ docker compose up --build
 
 The backend runs `php artisan migrate --force` automatically on first start. Database state persists in the `mysql_data` Docker volume across restarts.
 
+#### Creating an Admin Account
+
+Public registration always creates an **Operator** account. To provision a platform administrator (equivalent to Django's `createsuperuser`):
+
+```bash
+docker exec -it haul247-backend-1 php artisan admin:create
+```
+
+You'll be prompted for name, email, and password interactively. The account is created with `role: admin` and can access admin-only actions (delete trucks, delete shipments).
+
 To tear down completely (including the database volume):
 
 ```bash
@@ -520,6 +530,9 @@ php artisan jwt:secret
 # Install dependencies and migrate
 composer install
 php artisan migrate
+
+# Create your first admin account (like Django's createsuperuser)
+php artisan admin:create
 
 # Serve on port 8001 (8000 is often occupied)
 php artisan serve --port=8001

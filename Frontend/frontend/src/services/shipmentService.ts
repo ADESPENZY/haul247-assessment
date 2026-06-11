@@ -64,6 +64,9 @@ const shipmentService = {
   recommendTruck: (payload: { origin: string; destination: string; weight_kg: number }) =>
     api.post<TruckRecommendation>('/shipments/recommend-truck', payload),
 
+  destroy: (id: number) =>
+    api.delete<void>(`/shipments/${id}`),
+
   initiatePayment: (shipmentId: number) =>
     api.post<{
       status: boolean;

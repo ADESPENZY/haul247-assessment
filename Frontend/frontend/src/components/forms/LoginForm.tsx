@@ -19,9 +19,8 @@ export default function LoginForm() {
     setLoading(true);
     try {
       const { data } = await authService.login({ email, password });
-      // Mark the session as active for middleware route-protection.
-      // The actual JWT lives in the HttpOnly jwt_token cookie the backend set.
       Cookies.set('token', '1', { expires: 1 });
+      localStorage.setItem('userRole', data.user.role);
       toast.success('Welcome back! Redirecting…');
       router.push('/dashboard');
     } catch (err) {
